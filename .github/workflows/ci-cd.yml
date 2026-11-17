@@ -1,0 +1,165 @@
+name: CI-CD AutoParts
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: autoparts
+  # Variables falsas SOLO para que Django arranque en los tests (las reales nunca van al repo)
+  TEST_ENV: >-
+    -e SECRET_KEY=clave-de-prueba-ci -e DEBUG=False
+    -e CARAPI_TOKEN=x -e CARAPI_SECRET=x
+    -e TRANSBANK_COMMERCE_CODE=x -e TRANSBANK_API_KEY=x
+    -e CHILEXPRESS_API_KEY=x
+
+jobs:
+  # 1) Construir imagen Docker y correr pruebas unitarias DENTRO del contenedor
+  build-and-test:
+    name: Build Docker + Tests unitarios
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagen
+        run: docker build -t $IMAGE_NAME:test .
+      - name: Ejecutar tests dentro del contenedor
+        run: docker run --rm $TEST_ENV $IMAGE_NAME:test python manage.py test tienda -v 2
+
+  # 2) SonarCloud: calidad de código (falla si no pasa el Quality Gate)
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests con cobertura
+        working-directory: backend
+        env:
+          SECRET_KEY: clave-de-prueba-ci
+          DEBUG: "False"
+          CARAPI_TOKEN: x
+          CARAPI_SECRET: x
+          TRANSBANK_COMMERCE_CODE: x
+          TRANSBANK_API_KEY: x
+          CHILEXPRESS_API_KEY: x
+        run: |
+          pip install -r ../requirements.txt coverage
+          coverage run --source=tienda --omit="*/migrations/*" manage.py test tienda
+          coverage xml -o coverage.xml
+      - name: Análisis SonarCloud
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+  # 3) Snyk: dependencias + análisis estático del código (SAST)
+  snyk:
+    name: Snyk
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - uses: snyk/actions/setup@master
+      - name: Snyk Open Source (dependencias)
+        run: snyk test --file=requirements.txt --package-manager=pip --severity-threshold=critical
+      - name: Snyk Code (análisis estático)
+        run: snyk code test --severity-threshold=high
+
+  # 4) GitHub Advanced Security: CodeQL + escaneo de secretos + revisión de dependencias
+  codeql:
+    name: GitHub Advanced Security - CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+
+  secret-scan:
+    name: Escaneo de secretos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified
+
+  dependency-review:
+    name: Revisión de dependencias
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: critical
+          comment-summary-in-pr: always
+
+  # 5) Docker Scout: vulnerabilidades de la imagen (falla con CVEs críticas)
+  docker-scout:
+    name: Docker Scout
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Construir imagen
+        run: docker build -t $IMAGE_NAME:scout .
+      - name: Analizar con Docker Scout
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: local://autoparts:scout
+          only-severities: critical
+          exit-code: true
+
+  # 6) Publicar en Docker Hub SOLO si todo lo anterior pasó (y solo en push a develop)
+  publish:
+    name: Publicar en Docker Hub
+    if: github.event_name == 'push'
+    needs: [build-and-test, sonarcloud, snyk, codeql, secret-scan, docker-scout]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/autoparts:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/autoparts:${{ github.sha }}
