@@ -8,7 +8,7 @@ djangorestframework-simplejwt
 transbank-sdk
 humanize
 # Facturación electrónica
-reportlab>=3.6.0
+reportlab>=5.1.0
 requests>=2.25.0
 django-environ
 gunicorn
