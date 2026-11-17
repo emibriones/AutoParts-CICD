@@ -1,4 +1,8 @@
-TBK_API_KEY = '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C'
-TBK_MALL_ID = 'carlakookie@gmail.com'
-TBK_COMMERCE_CODE = '597055555532'
-TBK_INTEGRATION_TYPE = 'TEST' 
+import os
+
+# Las credenciales de Transbank se leen desde variables de entorno (.env),
+# nunca se escriben directamente en el código.
+TBK_API_KEY = os.environ.get('TRANSBANK_API_KEY', '')
+TBK_MALL_ID = os.environ.get('TRANSBANK_MALL_ID', '')
+TBK_COMMERCE_CODE = os.environ.get('TRANSBANK_COMMERCE_CODE', '')
+TBK_INTEGRATION_TYPE = os.environ.get('TRANSBANK_INTEGRATION_TYPE', 'TEST')
