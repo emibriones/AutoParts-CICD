@@ -56,7 +56,7 @@ jobs:
           coverage run --source=tienda --omit="*/migrations/*" manage.py test tienda
           coverage xml -o coverage.xml
       - name: Análisis SonarCloud
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
