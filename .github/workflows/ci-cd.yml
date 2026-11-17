@@ -147,7 +147,8 @@ jobs:
   publish:
     name: Publicar en Docker Hub
     if: github.event_name == 'push'
-    needs: [build-and-test, sonarcloud, snyk, codeql, secret-scan, docker-scout]
+    # Parte 1: publica solo si la construcción y las pruebas unitarias pasan
+    needs: [build-and-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
